@@ -1,0 +1,156 @@
+/* src/styles/app.css */
+/* Tweak freely. Structure in App.js stays the same. */
+
+:root{
+  --bg: #f7f8fa;
+  --card: #ffffff;
+  --text: #0f172a;
+  --muted: #6b7280;
+  --line: #e5e7eb;
+
+  --brand: #2563eb;      /* primary */
+  --brand-2: #1d4ed8;
+  --accent: #28a745;     /* classic green for Add buttons */
+  --danger: #dc2626;
+
+  --radius: 12px;
+  --shadow: 0 10px 30px rgba(2,6,23,0.06);
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body { margin: 0; font-family: var(--font); color: var(--text); background: var(--bg); }
+
+/* Utility containers */
+.screen-center {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.status-box {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px 22px;
+  box-shadow: var(--shadow);
+  color: var(--muted);
+}
+
+/* ===== Auth (keep as you liked) ===== */
+.auth-wrap { background: var(--bg); }
+.auth-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 22px;
+  box-shadow: var(--shadow);
+}
+
+.auth-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.auth-logo {
+  width: 32px; height: 32px; border-radius: 8px;
+  display: grid; place-items: center; color: #fff; font-weight: 800;
+  background: linear-gradient(135deg, var(--brand) 0%, var(--accent) 100%);
+}
+.auth-title { margin: 0; font-size: 20px; }
+.auth-subtitle { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+.auth-form { display: block; }
+.auth-foot { margin-top: 14px; font-size: 12px; color: var(--muted); text-align: center; }
+
+.label { display: block; font-size: 12.5px; color: #374151; margin: 8px 0 6px; font-weight: 600; }
+.input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  outline: none;
+  font-size: 14px;
+  background: #fff;
+}
+.pw-field { position: relative; }
+.pw-toggle {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  height: 28px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: #f9fafb; cursor: pointer;
+}
+
+.error-box {
+  margin-top: 10px;
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+/* ===== App shell ===== */
+.app-shell { max-width: 1200px; margin: 0 auto; padding: 20px; }
+.app-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.app-title { margin: 0; }
+.user-bar { display: flex; align-items: center; gap: 12px; }
+.user-name { color: var(--muted); font-size: 14px; }
+
+/* ===== Toolbar ===== */
+.toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 16px 0 20px; }
+.toolbar-left, .toolbar-right { display: flex; align-items: center; gap: 8px; }
+
+/* Buttons (generic) */
+.btn {
+  padding: 8px 14px;
+  margin-top: 15px;                 /* removed extra top gap */
+  border: 1px solid var(--line);
+  background: #f9fafb;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.btn-ghost {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  background: #f9fafb;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.btn-primary {
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  color: #fff;
+  border-radius: 10px;
+  cursor: pointer;
+  background: linear-gradient(180deg, var(--brand) 0%, var(--brand-2) 100%);
+  font-weight: 700;
+  letter-spacing: .2px;
+}
+.btn-accent {
+  background: var(--accent);     /* classic green */
+  color: #fff;
+  border: none;
+}
+.btn:disabled, .btn-primary:disabled { opacity: .7; cursor: not-allowed; }
+
+/* ===== Optional: table action buttons (only if you want to use classes instead of inline styles)
+   Your current AssetTable already has inline styles for Edit/Delete, so you don't need these.
+   If you ever switch, add className="btn-edit" / "btn-delete" to those buttons.
+*/
+.btn-edit {
+  background: #007bff;
+  color: #fff;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.btn-delete {
+  background: #dc3545;
+  color: #fff;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}

@@ -1,0 +1,14 @@
+# dependencies / artifacts
+node_modules/
+build/
+dist/
+
+# local data & secrets
+assets.db
+*.sqlite
+*.db
+.env
+.env.*
+
+# misc
+.DS_Store
