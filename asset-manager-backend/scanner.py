@@ -11,12 +11,13 @@ import requests
 import wmi
 from scapy.all import ARP, Ether, srp
 
-# -------- Config (env-overridable) --------
+# -------- Config --------
 API_ROOT_DEFAULT = os.environ.get("API_ROOT_DEFAULT", "http://10.27.16.97:4000")
 TARGET_DEFAULT = os.environ.get("TARGET_DEFAULT", "10.27.16.0/24")
 WMI_USERNAME = os.environ.get("WMI_USERNAME", "os-admin")
 WMI_PASSWORD = os.environ.get("WMI_PASSWORD", "Bahrain@2024")
 REQ_TIMEOUT = int(os.environ.get("REQ_TIMEOUT", "8"))
+SCAN_TOKEN = os.environ.get("SCAN_TOKEN")  # used for /assets/fingerprints
 
 # Per-scan ID cache so previewed devices get sequential IDs even before DB insert
 _id_state = {}  # {assetType: {"prefix": str, "num": int}}
@@ -35,6 +36,22 @@ def parse_args():
     return p.parse_args()
 
 
+# ---- Normalization helpers ----
+def norm_ip(ip: str) -> str:
+    return (ip or "").strip()
+
+
+def norm_mac(mac: str) -> str:
+    """
+    Normalize MAC to AA:BB:CC:DD:EE:FF. If not standard len, return upper/stripped.
+    """
+    s = re.sub(r"[^0-9A-Fa-f]", "", mac or "")
+    if len(s) == 12:
+        return ":".join(s[i:i + 2] for i in range(0, 12, 2)).upper()
+    return (mac or "").strip().upper()
+
+
+# ---- Networking helpers ----
 def get_mac_address(ip):
     """Try ARP to get MAC; fall back to 'Unknown' if not available/allowed."""
     try:
@@ -65,11 +82,13 @@ def scan_device(ip):
     except Exception:
         pass
 
-    # Fast TCP scan (no OS detection to avoid privilege/latency issues)
+    # nmap quick scan (OS guess optional)
     try:
         nm = nmap.PortScanner()
-        nm.scan(ip, arguments="-T4 -F")
+        nm.scan(ip, arguments="-T4 -F -O")
         if ip in nm.all_hosts():
+            if "osmatch" in nm[ip] and nm[ip]["osmatch"]:
+                data["os"] = nm[ip]["osmatch"][0]["name"]
             if "tcp" in nm[ip]:
                 data["ports"] = [
                     f"{p} ({nm[ip]['tcp'][p]['name']})"
@@ -82,7 +101,7 @@ def scan_device(ip):
     except Exception as e:
         log(f"Nmap error {ip}: {e}")
 
-    # ARP fallback (may need admin/Npcap; safe to fail)
+    # ARP fallback
     if data["mac"] == "Unknown":
         data["mac"] = get_mac_address(ip)
 
@@ -120,6 +139,11 @@ def scan_device(ip):
     except Exception as e:
         log(f"WMI error {ip}: {e}")
 
+    # Normalize IP/MAC here for consistency downstream
+    data["ip"] = norm_ip(data["ip"])
+    if data["mac"] and data["mac"] != "Unknown":
+        data["mac"] = norm_mac(data["mac"])
+
     return data
 
 
@@ -141,7 +165,10 @@ def get_next_asset_id(api_root, asset_type):
     try:
         encoded_type = requests.utils.quote(asset_type)
         url = f"{api_root}/assets/next-id/{encoded_type}"
-        res = requests.get(url, timeout=REQ_TIMEOUT)
+        headers = {}
+        # If you later token-gate next-id, uncomment:
+        # if SCAN_TOKEN: headers["X-Scan-Token"] = SCAN_TOKEN
+        res = requests.get(url, timeout=REQ_TIMEOUT, headers=headers)
         if res.status_code == 200:
             return res.json().get("id", "UNK-001")
         else:
@@ -174,29 +201,61 @@ def _propose_id(api_root, asset_type):
 
 
 def load_existing(api_root):
+    """
+    Prefer the token-gated /assets/fingerprints (backend provides only ip/mac).
+    Fall back to /assets only if fingerprints is unavailable and /assets is public.
+    Applies normalization so MAC/IP comparisons are robust.
+    """
     macs, ips = set(), set()
+    headers = {}
+    if SCAN_TOKEN:
+        headers["X-Scan-Token"] = SCAN_TOKEN
+
+    # 1) Try fingerprints (expected 200 with token)
     try:
-        res = requests.get(f"{api_root}/assets", timeout=REQ_TIMEOUT)
-        if res.status_code == 200:
-            for a in res.json():
-                m = (a or {}).get("macAddress")
-                i = (a or {}).get("ipAddress")
+        r = requests.get(f"{api_root}/assets/fingerprints", headers=headers, timeout=REQ_TIMEOUT)
+        if r.status_code == 200:
+            body = r.json() or {}
+            for m in (body.get("macs") or []):
+                nm = norm_mac(m)
+                if nm:
+                    macs.add(nm)
+            for i in (body.get("ips") or []):
+                ni = norm_ip(i)
+                if ni:
+                    ips.add(ni)
+            return macs, ips
+        else:
+            log(f"Fingerprints status: {r.status_code}")
+    except Exception as e:
+        log(f"Fingerprints error: {e}")
+
+    # 2) Optional fallback (usually protected)
+    try:
+        r = requests.get(f"{api_root}/assets", timeout=REQ_TIMEOUT)
+        if r.status_code == 200:
+            for a in r.json():
+                m = norm_mac((a or {}).get("macAddress") or "")
+                i = norm_ip((a or {}).get("ipAddress") or "")
                 if m:
                     macs.add(m)
                 if i:
                     ips.add(i)
+        else:
+            log(f"/assets fallback status: {r.status_code}")
     except Exception as e:
-        log(f"Load-existing error: {e}")
+        log(f"/assets fallback error: {e}")
+
     return macs, ips
 
 
 def is_duplicate(macs_set, ips_set, mac, ip):
-    return (mac and mac in macs_set) or (ip and ip in ips_set)
+    return (mac and norm_mac(mac) in macs_set) or (ip and norm_ip(ip) in ips_set)
 
 
 def format_for_upload(api_root, info):
     group, assetType = auto_detect_group_and_type(info.get("os", ""), info.get("model", ""))
-    asset_id = _propose_id(api_root, assetType)  # <-- local sequential IDs per scan
+    asset_id = _propose_id(api_root, assetType)  # local sequential IDs per scan
     return {
         "assetId": asset_id,
         "group": group,
@@ -204,8 +263,8 @@ def format_for_upload(api_root, info):
         "brandModel": f"{info.get('manufacturer')} {info.get('model')}".strip(),
         "serialNumber": info.get("serial_number"),
         "assignedTo": info.get("logged_in_user"),
-        "ipAddress": info.get("ip"),
-        "macAddress": info.get("mac"),
+        "ipAddress": norm_ip(info.get("ip")),
+        "macAddress": norm_mac(info.get("mac")) if info.get("mac") and info.get("mac") != "Unknown" else "",
         "osFirmware": info.get("os"),
         "cpu": info.get("cpu"),
         "ram": info.get("ram"),
@@ -234,18 +293,12 @@ def format_for_upload(api_root, info):
 
 
 def discover_hosts(target_str):
-    """Safe discovery that avoids ARP/privileged probes to prevent truncated XML on Windows services."""
     log(f"Start scan: {target_str}")
     nm = nmap.PortScanner()
-    try:
-        # No ARP, no reverse DNS, conservative retries and per-host timeout
-        nm.scan(hosts=target_str, arguments="-sn -n --disable-arp-ping --max-retries 1 --host-timeout 2s")
-        up = [h for h in nm.all_hosts() if nm[h].state() == "up"]
-        log(f"Hosts up: {len(up)}")
-        return up
-    except Exception as e:
-        log(f"nmap discovery failed: {e}")
-        return []
+    nm.scan(hosts=target_str, arguments="-sn")
+    up = [h for h in nm.all_hosts() if nm[h].state() == "up"]
+    log(f"Hosts up: {len(up)}")
+    return up
 
 
 def main():
@@ -278,13 +331,18 @@ def main():
                 discovered_payloads.append(payload)
                 log(f"Prepared: {ip} → {payload['assetId']}")
             else:
-                res = requests.post(assets_url, json=payload, timeout=REQ_TIMEOUT)
+                # Optional: send token in case you gate POST in future
+                headers = {}
+                if SCAN_TOKEN:
+                    headers["X-Scan-Token"] = SCAN_TOKEN
+
+                res = requests.post(assets_url, json=payload, timeout=REQ_TIMEOUT, headers=headers)
                 if res.status_code in (200, 201):
                     added += 1
                     if payload.get("macAddress"):
-                        macs_set.add(payload["macAddress"])
+                        macs_set.add(norm_mac(payload["macAddress"]))
                     if payload.get("ipAddress"):
-                        ips_set.add(payload["ipAddress"])
+                        ips_set.add(norm_ip(payload["ipAddress"]))
                     log(f"Registered: {ip} → {payload['assetId']}")
                 else:
                     log(f"POST failed {ip}: {res.status_code} {res.text}")
