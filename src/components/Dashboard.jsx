@@ -248,8 +248,8 @@ export default function Dashboard() {
         <KPI title="Unassigned" value={fmtNum(unassignedCount)} accent="#f59e0b" big={presentation} />
         <KPI title="Expiring ≤90d" value={fmtNum(expiringSoon.length)} accent="#ef4444" big={presentation} />
         <KPI title="Missing Serials" value={fmtNum(missingSerials)} accent="#64748b" big={presentation} />
-        <KPI title="Total Value" value={`$${fmtNum(totalValue)}`} accent="#0ea5e9" big={presentation} />
-        <KPI title="Est. Current Value" value={`$${fmtNum(currentValue)}`} accent="#8b5cf6" big={presentation} />
+        <KPI title="Total Value" value={fmtBD(totalValue)} accent="#0ea5e9" big={presentation} />
+        <KPI title="Est. Current Value" value={fmtBD(currentValue)} accent="#8b5cf6" big={presentation} />
         <KPI title="Avg. Age" value={`${avgAgeYears.toFixed(1)} yrs`} accent="#14b8a6" big={presentation} />
       </div>
 
@@ -368,14 +368,10 @@ export default function Dashboard() {
                     height={60}
                     tickFormatter={(v) => shorten(v, presentation ? 18 : 14)}
                   />
-                  <YAxis tickFormatter={(v) => `$${fmtNum(v)}`} />
-                  <Tooltip formatter={(v) => `$${fmtNum(v)}`} />
+                <YAxis tickFormatter={(v) => fmtBD(v)} />
+                <Tooltip formatter={(v) => fmtBD(v)} />
                   <Bar dataKey="value" name="Total Cost">
-                    <LabelList
-                      dataKey="value"
-                      position="top"
-                      formatter={(v) => `$${fmtNum(v)}`}
-                    />
+                    <LabelList dataKey="value" position="top" formatter={(v) => fmtBD(v)} />
                     {topTypesByCost.map((d, i) => (
                       <Cell key={i} fill={d.fill} />
                     ))}
@@ -433,7 +429,7 @@ export default function Dashboard() {
             {drillSummary && (
               <>
                 <p><strong>Total assets:</strong> {drillSummary.totalAssets}</p>
-                <p><strong>Total cost:</strong> ${fmtNum(drillSummary.sumCost)}</p>
+                <p><strong>Total cost:</strong> {fmtBD(drillSummary.sumCost)}</p>
                 <p><strong>Average age:</strong> {drillSummary.avgAge.toFixed(1)} yrs</p>
                 <h4 style={{ marginTop: 20 }}>Top asset types</h4>
                 {drillSummary.topTypes.length === 0 ? (
@@ -476,7 +472,7 @@ export default function Dashboard() {
                           <td style={td(false)}>{a.assetId}</td>
                           <td style={td(false)}>{a.assetType || '-'}</td>
                           <td style={td(false)}>{a.brandModel || '-'}</td>
-                          <td style={td(false)}>${fmtNum(toNum(a.cost))}</td>
+                          <td style={td(false)}>{fmtBD(toNum(a.cost))}</td>
                           <td style={td(false)}>{a.assignedTo || '-'}</td>
                         </tr>
                       ))}
@@ -541,6 +537,13 @@ const td = (big) => ({
 function fmtNum(n) {
   const v = Math.round(n);
   return v.toLocaleString();
+}
+function fmtBD(value) {
+  const num = Number(value || 0);
+  return `BD ${new Intl.NumberFormat('en-BH', {
+    minimumFractionDigits: 3,
+    maximumFractionDigits: 3
+  }).format(num)}`;
 }
 function hexWithAlpha(hex, alpha = 0.2) {
   const c = hex.replace('#', '');

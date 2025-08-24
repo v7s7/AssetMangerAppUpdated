@@ -8,21 +8,25 @@ const sqlite3 = require('sqlite3').verbose();
 const cors = require('cors');
 const { spawn } = require('child_process');
 const path = require('path');
+const fs = require('fs'); // ADDED
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
 const ldap = require('ldapjs');
+const multer = require('multer'); // ADDED
 
 const app = express();
 const PORT = Number(process.env.PORT || 4000);
 const SCAN_TOKEN = process.env.SCAN_TOKEN || '';
 
 /* --------------------------- Config / Defaults --------------------------- */
-// CORS origins (comma separated)
+// CORS origins (comma separated) — normalize: lowercase + strip trailing slash
 const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS ||
-  'http://10.27.17.20:3000,http://10.27.17.20:3100,http://localhost:3100,http://127.0.0.1:3100')
+  'http://10.27.17.20:3100,http://localhost:3100,http://127.0.0.1:3100')
   .split(',')
-  .map(s => s.trim())
+  .map(s => (s || '').trim().toLowerCase().replace(/\/$/, ''))
   .filter(Boolean);
+
+const normalizeOrigin = v => (v || '').toLowerCase().replace(/\/$/, '');
 
 // LDAP (meeting-app style)
 const LDAP_URL = process.env.LDAP_URL || 'ldap://10.27.16.5';
@@ -55,13 +59,25 @@ function isAllowedEmailOrUsername(email) {
 }
 
 /* --------------------------- Middleware (top) ---------------------------- */
-app.use(cors({
+// ---- CORS (normalized) ----
+const corsOptions = {
   origin: (origin, cb) => {
-    if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    // allow server-to-server or tools with no Origin header
+    if (!origin) return cb(null, true);
+    if (ALLOWED_ORIGINS.includes(normalizeOrigin(origin))) return cb(null, true);
     return cb(new Error('CORS blocked: ' + origin));
   },
-  credentials: true
-}));
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  preflightContinue: false,
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+// Preflight handler compatible with path-to-regexp v7+: use regex, not '*'
+app.options(/.*/, cors(corsOptions));
+
 app.use(cookieParser());
 app.use(express.json());
 app.use(session({
@@ -74,6 +90,9 @@ app.use(session({
     // secure: true,
   }
 }));
+
+// ADDED: Static serving for uploads
+app.use('/uploads', express.static(path.resolve(__dirname, 'uploads')));
 
 /* ------------------------------ SQLite ---------------------------------- */
 const dbPath = path.resolve(__dirname, 'assets.db');
@@ -115,6 +134,19 @@ db.run(`CREATE TABLE IF NOT EXISTS assets (
 )`);
 
 db.run(`CREATE TABLE IF NOT EXISTS used_ids ( assetId TEXT PRIMARY KEY )`);
+
+// ADDED: safe migration to add invoiceUrl column if missing
+function ensureInvoiceColumn(cb) {
+  db.all(`PRAGMA table_info(assets);`, [], (err, rows) => {
+    if (err) return cb(err);
+    const has = rows.some(r => String(r.name).toLowerCase() === 'invoiceurl');
+    if (has) return cb();
+    db.run(`ALTER TABLE assets ADD COLUMN invoiceUrl TEXT`, [], (err2) => {
+      if (err2) return cb(err2);
+      cb();
+    });
+  });
+}
 
 /* ---------- Helpers: normalization + required fields + txn rollback ------- */
 function normalizeIp(v) {
@@ -484,6 +516,44 @@ app.get('/assets/next-id/:type', (req, res) => {
   });
 });
 
+// ADDED: Invoices upload (PDF only)
+const invoicesDir = path.resolve(__dirname, 'uploads', 'invoices');
+fs.mkdirSync(invoicesDir, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, invoicesDir),
+  filename: (req, file, cb) => {
+    const assetId = req.params.assetId || 'unknown';
+    const ext = path.extname(file.originalname || '.pdf') || '.pdf';
+    cb(null, `${assetId}-${Date.now()}${ext}`);
+  }
+});
+
+const uploadPdfOnly = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  fileFilter: (req, file, cb) => {
+    const ok = file.mimetype === 'application/pdf' || (file.originalname || '').toLowerCase().endsWith('.pdf');
+    if (!ok) return cb(new Error('Only PDF files are allowed'));
+    cb(null, true);
+  }
+});
+
+// ADDED: Upload invoice route (protected by session guard)
+app.post('/assets/:assetId/invoice', uploadPdfOnly.single('file'), (req, res) => {
+  const { assetId } = req.params;
+  if (!assetId) return res.status(400).json({ error: 'assetId is required' });
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  const invoiceUrl = `/uploads/invoices/${req.file.filename}`;
+
+  db.run(`UPDATE assets SET invoiceUrl = ? WHERE assetId = ?`, [invoiceUrl, assetId], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    if (this.changes === 0) return res.status(404).json({ error: 'Asset not found' });
+    res.json({ url: invoiceUrl });
+  });
+});
+
 /* --------------------------------- Scan ---------------------------------- */
 app.post('/scan', (req, res) => {
   const target = (req.body?.target || '').trim();
@@ -551,7 +621,13 @@ dedupeAndIndex((err) => {
     console.error('Dedupe/Index error:', err);
     process.exit(1);
   }
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`✅ Server running on port ${PORT} (listening on 0.0.0.0)`);
+  ensureInvoiceColumn((err2) => { // ADDED
+    if (err2) {
+      console.error('Migration error (invoiceUrl):', err2);
+      process.exit(1);
+    }
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`✅ Server running on port ${PORT} (listening on 0.0.0.0)`);
+    });
   });
 });

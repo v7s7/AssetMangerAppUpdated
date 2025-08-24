@@ -4,14 +4,17 @@ import json
 import socket
 import sys
 import re
-import os
 
 import nmap
 import requests
 import wmi
 from scapy.all import ARP, Ether, srp
-
+import subprocess
+import shutil
+import os
 # -------- Config --------
+
+NMAP_PATH = os.environ.get("NMAP_PATH") or shutil.which("nmap") or r"C:\Program Files (x86)\Nmap\nmap.exe"
 API_ROOT_DEFAULT = os.environ.get("API_ROOT_DEFAULT", "http://10.27.16.97:4000")
 TARGET_DEFAULT = os.environ.get("TARGET_DEFAULT", "10.27.16.0/24")
 WMI_USERNAME = os.environ.get("WMI_USERNAME", "os-admin")
@@ -293,12 +296,30 @@ def format_for_upload(api_root, info):
 
 
 def discover_hosts(target_str):
+    """Host discovery that avoids python-nmap XML parsing (robust on Windows)."""
     log(f"Start scan: {target_str}")
-    nm = nmap.PortScanner()
-    nm.scan(hosts=target_str, arguments="-sn")
-    up = [h for h in nm.all_hosts() if nm[h].state() == "up"]
-    log(f"Hosts up: {len(up)}")
-    return up
+    cmd = [NMAP_PATH, "-sn", "-n", "--max-retries", "1", "--host-timeout", "2s", target_str]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, errors="ignore", timeout=120)
+        if out.returncode != 0:
+            log(f"nmap exit {out.returncode}: {out.stderr.strip() or out.stdout[:200]}")
+            return []
+        up = []
+        current = None
+        for line in out.stdout.splitlines():
+            line = line.strip()
+            if line.startswith("Nmap scan report for "):
+                # line looks like: Nmap scan report for 10.27.16.2 (or for hostname (ip))
+                current = line.split("Nmap scan report for ", 1)[1].split()[0]
+            elif current and line.startswith("Host is up"):
+                up.append(current)
+                current = None
+        log(f"Hosts up: {len(up)}")
+        return up
+    except Exception as e:
+        log(f"nmap discovery failed: {e}")
+        return []
+
 
 
 def main():

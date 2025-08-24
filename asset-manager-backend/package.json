@@ -16,6 +16,7 @@
     "express": "^5.1.0",
     "express-session": "^1.18.2",
     "ldapjs": "^3.0.7",
+    "multer": "^2.0.2",
     "sqlite3": "^5.1.7"
   }
 }

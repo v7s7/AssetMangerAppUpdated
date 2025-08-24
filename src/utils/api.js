@@ -14,11 +14,11 @@ export const API_URL = (process.env.REACT_APP_API_URL || DEFAULT_API).replace(/\
 // Small helper to standardize fetch + errors
 async function request(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
-
+const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const res = await fetch(`${API_URL}${path}`, {
     // Only set JSON header when we actually send a body
     headers: {
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(!isFormData && options.body ? { 'Content-Type': 'application/json' } : {}),
       ...(options.headers || {}),
     },
     method,
@@ -128,5 +128,20 @@ export async function bulkAddAssets(assets) {
   return request(`/assets/bulk`, {
     method: 'POST',
     body: JSON.stringify({ assets }),
+  });
+}
+/* ===== Invoices (PDF) ===== */
+// POST /assets/:assetId/invoice  (multipart/form-data with field "file")
+// Expects backend to store and associate the file, returning { url: '...' }
+export async function uploadInvoice(assetId, file) {
+  if (!assetId) throw new Error('assetId is required to upload an invoice');
+  if (!(file instanceof File)) throw new Error('file must be a File');
+  const fd = new FormData();
+  fd.append('file', file);
+  const encoded = encodeURIComponent(assetId);
+  // Return payload: e.g., { url: 'https://.../invoices/ASSET-001.pdf' }
+  return request(`/assets/${encoded}/invoice`, {
+    method: 'POST',
+    body: fd,
   });
 }

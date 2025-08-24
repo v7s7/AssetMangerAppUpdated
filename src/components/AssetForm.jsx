@@ -2,15 +2,20 @@ import React, { useState, useEffect } from 'react';
 import {
   addAsset,
   updateAsset,
-  getNextAssetId
+  getNextAssetId,
+  uploadInvoice,
 } from '../utils/api';
 import { groups } from '../data/groups';
 import { categories } from '../data/categories';
-
+import { API_URL } from '../utils/api';
+const resolveUrl = (u) => (u && u.startsWith('/') ? `${API_URL}${u}` : u);
 export default function AssetForm({ onSave, editData }) {
   const isEdit = !!editData;
   const [formData, setFormData] = useState(null);
-  const [originalId, setOriginalId] = useState(null);
+  const [originalId, setOriginalId] = useState(null); 
+   const [invoiceFile, setInvoiceFile] = useState(null);
+const [invoiceUploading, setInvoiceUploading] = useState(false);
+const [invoiceError, setInvoiceError] = useState('');
 const STATUS_OPTIONS = ['Active', 'Not active', 'Retired', 'Suspended'];
 
   // extra fields for "Other"
@@ -22,8 +27,16 @@ const STATUS_OPTIONS = ['Active', 'Not active', 'Retired', 'Suspended'];
 
   useEffect(() => {
     if (isEdit) {
-      setFormData(editData);
-      setOriginalId(editData.assetId);
+setFormData(prev => ({
+  assetId: '', group: '', assetType: '', brandModel: '', serialNumber: '', assignedTo: '',
+  ipAddress: '', macAddress: '', osFirmware: '', cpu: '', ram: '', storage: '',
+  portDetails: '', powerConsumption: '', purchaseDate: '', warrantyExpiry: '', eol: '',
+  maintenanceExpiry: '', cost: '', depreciation: '', residualValue: '', status: '',
+  condition: '', usagePurpose: '', accessLevel: '', licenseKey: '', complianceStatus: '',
+  documentation: '', remarks: '', lastAuditDate: '', disposedDate: '', replacementPlan: '',
+  invoiceUrl: '',
+  ...editData
+}));      setOriginalId(editData.assetId);
       // If editing and the current values are not in the predefined lists, show them as "Other"
       if (editData?.group && !groups.includes(editData.group)) {
         setOtherGroup(editData.group);
@@ -67,7 +80,8 @@ const STATUS_OPTIONS = ['Active', 'Not active', 'Retired', 'Suspended'];
           remarks: '',
           lastAuditDate: '',
           disposedDate: '',
-          replacementPlan: ''
+          replacementPlan: '',
+          invoiceUrl: ''
         });
       };
       init();
@@ -203,13 +217,28 @@ const STATUS_OPTIONS = ['Active', 'Not active', 'Retired', 'Suspended'];
     };
 
     try {
+      let effectiveId = formData.assetId;
       if (isEdit) {
         await updateAsset(payload, originalId || formData.assetId);
-        alert('Asset updated');
       } else {
         await addAsset(payload);
-        alert('Asset added');
       }
+
+      // If a PDF is selected, upload it to the server and refresh invoiceUrl
+      if (invoiceFile && effectiveId) {
+        setInvoiceUploading(true);
+        try {
+          const res = await uploadInvoice(effectiveId, invoiceFile);
+          // If backend returns { url }, reflect it locally so user sees the link immediately
+          if (res?.url) {
+            setFormData((prev) => ({ ...prev, invoiceUrl: res.url }));
+          }
+        } finally {
+          setInvoiceUploading(false);
+        }
+      }
+
+      alert(isEdit ? 'Asset updated' : 'Asset added');
       if (onSave) onSave();
     } catch (err) {
       alert('Error: ' + err.message);
@@ -366,6 +395,39 @@ const STATUS_OPTIONS = ['Active', 'Not active', 'Retired', 'Suspended'];
               </div>
             );
           })}
+          {section.title === 'Compliance & Documentation' && (
+  <div style={fieldRow}>
+    <label style={labelStyle}>Invoice (PDF)</label>
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <input
+        type="file"
+        accept="application/pdf"
+        onChange={(e) => {
+          setInvoiceError('');
+          const f = e.target.files?.[0];
+          if (!f) { setInvoiceFile(null); return; }
+          // Basic guard: 10 MB limit (adjust as needed)
+          if (f.size > 10 * 1024 * 1024) {
+            setInvoiceError('File too large. Max 10 MB.');
+            e.target.value = '';
+            return;
+          }
+          setInvoiceFile(f);
+        }}
+        style={inputStyle}
+      />
+      {invoiceUploading && <span style={{ color: '#6b7280' }}>Uploading…</span>}
+      {invoiceError && <span style={{ color: '#dc2626' }}>{invoiceError}</span>}
+    </div>
+    {formData?.invoiceUrl ? (
+      <div style={{ marginTop: 6 }}>
+        <a href={resolveUrl(formData.invoiceUrl)} target="_blank" rel="noopener noreferrer">
+          View current invoice
+        </a>
+      </div>
+    ) : null}
+  </div>
+)}
         </fieldset>
       ))}
 
